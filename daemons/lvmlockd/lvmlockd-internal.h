@@ -369,6 +369,11 @@ int lockspaces_empty(void);
 int last_string_from_args(char *args_in, char *last);
 int version_from_args(char *args, unsigned int *major, unsigned int *minor, unsigned int *patch);
 
+/* IDM constants */
+#define NVME_NAME		"nvme"
+#define NVME_NAMESPACE_TAG	"n"
+#define NVME_PARTITION_TAG	"p"
+
 static inline const char *mode_str(int x)
 {
 	switch (x) {

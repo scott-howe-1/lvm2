@@ -235,6 +235,69 @@ done:
 	return found;
 }
 
+static char *lm_idm_nvme_get_block_device_node(const char *nvme_path)
+{
+	// char *blk_path = NULL;
+	// char *blk_dev = NULL;
+	char *dev_node = NULL;
+	int ret;
+
+	// /*
+	//  * Locate the "block" directory, such like:
+	//  * /sys/bus/scsi/devices/1:0:0:0/block
+	//  */
+	// ret = asprintf(&blk_path, "%s/%s", scsi_path, "block");
+	// if (ret < 0) {
+	// 	log_error("Fail to allocate block path for %s", scsi_path);
+	// 	goto fail;
+	// }
+
+	// ret = lm_idm_scsi_find_block_dirctory(blk_path);
+	// if (ret < 0) {
+	// 	log_error("Fail to find block path %s", blk_path);
+	// 	goto fail;
+	// }
+
+	// /*
+	//  * Locate the block device name, such like:
+	//  * /sys/bus/scsi/devices/1:0:0:0/block/sdb
+	//  *
+	//  * After return from this function and if it makes success,
+	//  * the global variable "blk_dev" points to the block device
+	//  * name, in this example it points to string "sdb".
+	//  */
+	// ret = lm_idm_scsi_find_block_node(blk_path, &blk_dev);
+	// if (ret < 0) {
+	// 	log_error("Fail to find block node");
+	// 	goto fail;
+	// }
+
+	/*
+	 * Locate the "nvme" directory directly from /dev, such like:
+	 * /dev/nvme0n1
+	 */
+	//Need a path copy, in separately malloc'd memory, for return value
+	ret = asprintf(&dev_node, "%s", nvme_path);
+	if (ret < 0) {
+		log_error("Fail to allocate memory for nvme blk node path");
+		goto fail;
+	}
+
+	ret = lm_idm_scsi_search_propeller_partition(dev_node);//TODO: Is this a SCSI ONLY search, or does NVME work too????????
+	if (ret < 0)
+		goto fail;
+
+	// free(blk_path);
+	// free(blk_dev);
+	return dev_node;
+
+fail:
+	// free(blk_path);
+	// free(blk_dev);
+	free(dev_node);
+	return NULL;
+}
+
 static char *lm_idm_scsi_get_block_device_node(const char *scsi_path)
 {
 	char *blk_path = NULL;
@@ -248,13 +311,13 @@ static char *lm_idm_scsi_get_block_device_node(const char *scsi_path)
 	 */
 	ret = asprintf(&blk_path, "%s/%s", scsi_path, "block");
 	if (ret < 0) {
-		log_error("Fail to allocate block path for %s", scsi_path);
+		log_error("Fail to allocate scsi block path for %s", scsi_path);
 		goto fail;
 	}
 
 	ret = lm_idm_scsi_find_block_dirctory(blk_path);
 	if (ret < 0) {
-		log_error("Fail to find block path %s", blk_path);
+		log_error("Fail to find scsi block path %s", blk_path);
 		goto fail;
 	}
 
@@ -268,13 +331,13 @@ static char *lm_idm_scsi_get_block_device_node(const char *scsi_path)
 	 */
 	ret = lm_idm_scsi_find_block_node(blk_path, &blk_dev);
 	if (ret < 0) {
-		log_error("Fail to find block node");
+		log_error("Fail to find scsi block node");
 		goto fail;
 	}
 
 	ret = asprintf(&dev_node, "/dev/%s", blk_dev);
 	if (ret < 0) {
-		log_error("Fail to allocate memory for blk node path");
+		log_error("Fail to allocate memory for scsi blk node path");
 		goto fail;
 	}
 
@@ -293,7 +356,91 @@ fail:
 	return NULL;
 }
 
-static int lm_idm_get_gl_lock_pv_list(void)
+static int lm_idm_nvme_directory_select(const struct dirent *s)
+{
+	char *token1;
+	char *token2;
+
+	//Search for "nvmeXnX", where "X" is an int
+	//Ignoe "nvmeX" and "nvmeXnXpX".
+	token1 = strstr(s->d_name, NVME_NAME);
+	if (token1 != NULL) {
+		token1 += strlen(NVME_NAME);
+
+		//want namespace char
+		token2 = strstr(token1, NVME_NAMESPACE_TAG);
+		if (token2 != NULL) {
+			token2 += strlen(NVME_NAMESPACE_TAG);
+
+			//don't want partition char
+			token1 = strstr(token2, NVME_PARTITION_TAG);
+			if (token1 == NULL) {
+				return 1;
+			}
+		}
+
+	}
+
+	return 0;
+}
+
+static int lm_idm_nvme_get_gl_lock_pv_list(void)
+{
+	struct dirent **dir_list;
+	char nvme_dev_path[PATH_MAX];
+	char *drive_path;
+	int i, dir_num, ret;
+
+	if (glb_lock_op.drive_num)
+		return 0;
+
+	snprintf(nvme_dev_path, sizeof(nvme_dev_path), "/dev");
+
+	dir_num = scandir(nvme_dev_path, &dir_list,
+			  lm_idm_nvme_directory_select, NULL);
+	if (dir_num < 0) {
+		log_error("Attached nvme devices: none");
+		return -1;
+	}
+
+	for (i = 0; i < dir_num; i++) {
+		char *nvme_path;
+
+		if (glb_lock_op.drive_num >= ILM_DRIVE_MAX_NUM) {
+			log_error("Global lock: drive number %d exceeds limitation (%d) ?!",
+				  glb_lock_op.drive_num, ILM_DRIVE_MAX_NUM);
+			goto fail;
+		}
+
+		ret = asprintf(&nvme_path, "%s/%s", nvme_dev_path,
+			       dir_list[i]->d_name);
+		if (ret < 0) {
+			log_error("Fail to allocate memory for nvme directory");
+			goto fail;
+		}
+
+		drive_path = lm_idm_nvme_get_block_device_node(nvme_path);
+		if (!drive_path) {
+			free(nvme_path);
+			continue;
+		}
+
+		glb_lock_op.drives[glb_lock_op.drive_num] = drive_path;
+		glb_lock_op.drive_num++;
+
+		free(nvme_path);
+	}
+
+	lm_idm_free_dir_list(dir_list, dir_num);
+	return 0;
+
+fail:
+	lm_idm_free_dir_list(dir_list, dir_num);
+
+	return -1;
+}
+
+static int lm_idm_scsi_get_gl_lock_pv_list(void)
 {
 	struct dirent **dir_list;
 	char scsi_bus_path[PATH_MAX];
@@ -309,25 +456,24 @@ static int lm_idm_get_gl_lock_pv_list(void)
 	dir_num = scandir(scsi_bus_path, &dir_list,
 			  lm_idm_scsi_directory_select, NULL);
 	if (dir_num < 0) {  /* scsi mid level may not be loaded */
-		log_error("Attached devices: none");
+		log_error("Attached scsi devices: none");
 		return -1;
 	}
 
 	for (i = 0; i < dir_num; i++) {
 		char *scsi_path;
 
+		if (glb_lock_op.drive_num >= ILM_DRIVE_MAX_NUM) {
+			log_error("Global lock: drive number %d exceeds limitation (%d) ?!",
+				  glb_lock_op.drive_num, ILM_DRIVE_MAX_NUM);
+			goto fail;
+		}
+
 		ret = asprintf(&scsi_path, "%s/%s", scsi_bus_path,
 			       dir_list[i]->d_name);
 		if (ret < 0) {
 			log_error("Fail to allocate memory for scsi directory");
-			goto failed;
-		}
-
-		if (glb_lock_op.drive_num >= ILM_DRIVE_MAX_NUM) {
-			log_error("Global lock: drive number %d exceeds limitation (%d) ?!",
-				  glb_lock_op.drive_num, ILM_DRIVE_MAX_NUM);
-			free(scsi_path);
-			goto failed;
+			goto fail;
 		}
 
 		drive_path = lm_idm_scsi_get_block_device_node(scsi_path);
@@ -345,9 +491,27 @@ static int lm_idm_get_gl_lock_pv_list(void)
 	lm_idm_free_dir_list(dir_list, dir_num);
 	return 0;
 
-failed:
+fail:
 	lm_idm_free_dir_list(dir_list, dir_num);
 
+	return -1;
+}
+
+static int lm_idm_get_gl_lock_pv_list(void)
+{
+	int i, ret;
+
+	ret = lm_idm_nvme_get_gl_lock_pv_list();
+	if (ret < 0)
+		goto fail;
+
+	ret = lm_idm_scsi_get_gl_lock_pv_list();
+	if (ret < 0)
+		goto fail;
+
+	return 0;
+
+fail:
 	for (i = 0; i < glb_lock_op.drive_num; i++) {
 		if (glb_lock_op.drives[i]) {
 			free(glb_lock_op.drives[i]);
