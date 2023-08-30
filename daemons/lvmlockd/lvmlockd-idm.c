@@ -34,6 +34,10 @@
 
 #define IDM_TIMEOUT	60000	/* unit: millisecond, 60 seconds */
 
+#define NVME_NAME		"nvme"
+#define NVME_NAMESPACE_TAG	"n"
+#define NVME_PARTITION_TAG	"p"
+
 /*
  * Each lockspace thread has its own In-Drive Mutex (IDM) lock manager's
  * connection.  After established socket connection, the lockspace has
@@ -237,63 +241,26 @@ done:
 
 static char *lm_idm_nvme_get_block_device_node(const char *nvme_path)
 {
-	// char *blk_path = NULL;
-	// char *blk_dev = NULL;
 	char *dev_node = NULL;
 	int ret;
 
-	// /*
-	//  * Locate the "block" directory, such like:
-	//  * /sys/bus/scsi/devices/1:0:0:0/block
-	//  */
-	// ret = asprintf(&blk_path, "%s/%s", scsi_path, "block");
-	// if (ret < 0) {
-	// 	log_error("Fail to allocate block path for %s", scsi_path);
-	// 	goto fail;
-	// }
-
-	// ret = lm_idm_scsi_find_block_dirctory(blk_path);
-	// if (ret < 0) {
-	// 	log_error("Fail to find block path %s", blk_path);
-	// 	goto fail;
-	// }
-
-	// /*
-	//  * Locate the block device name, such like:
-	//  * /sys/bus/scsi/devices/1:0:0:0/block/sdb
-	//  *
-	//  * After return from this function and if it makes success,
-	//  * the global variable "blk_dev" points to the block device
-	//  * name, in this example it points to string "sdb".
-	//  */
-	// ret = lm_idm_scsi_find_block_node(blk_path, &blk_dev);
-	// if (ret < 0) {
-	// 	log_error("Fail to find block node");
-	// 	goto fail;
-	// }
-
 	/*
-	 * Locate the "nvme" directory directly from /dev, such like:
-	 * /dev/nvme0n1
+	 * Locate the "nvme" directory directly from /dev, such as: /dev/nvme0n1
+	 * Need a malloc'd path copy that is freed downstream
 	 */
-	//Need a path copy, in separately malloc'd memory, for return value
 	ret = asprintf(&dev_node, "%s", nvme_path);
 	if (ret < 0) {
 		log_error("Fail to allocate memory for nvme blk node path");
 		goto fail;
 	}
 
-	ret = lm_idm_scsi_search_propeller_partition(dev_node);//TODO: Is this a SCSI ONLY search, or does NVME work too????????
+	ret = lm_idm_scsi_search_propeller_partition(dev_node);
 	if (ret < 0)
 		goto fail;
 
-	// free(blk_path);
-	// free(blk_dev);
 	return dev_node;
 
 fail:
-	// free(blk_path);
-	// free(blk_dev);
 	free(dev_node);
 	return NULL;
 }
