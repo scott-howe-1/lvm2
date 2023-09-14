@@ -38,6 +38,13 @@
 #define NVME_NAMESPACE_TAG	"n"
 #define NVME_PARTITION_TAG	"p"
 
+/* This version value correpsonds to a version of the "IDM SPEC".
+This value is stored in the drive firmware.
+It is used to identify the minimum level of IDM funcionality that both the
+firmware and this software should support. */
+#define	MIN_IDM_SPEC_VERSION_MAJOR	1
+#define	MIN_IDM_SPEC_VERSION_MINOR	0
+
 /*
  * Each lockspace thread has its own In-Drive Mutex (IDM) lock manager's
  * connection.  After established socket connection, the lockspace has
@@ -239,6 +246,41 @@ done:
 	return found;
 }
 
+// Retrieves the ILM spec version from drive firmware.
+// Compares against minimum required.
+static int lm_idm_validate_spec_version(char *dev) {
+
+	uint8_t major, minor;
+	int ret;
+
+	ret = ilm_version(dev, &major, &minor);
+	if(!ret) {
+		log_error("%s: Failed to read ilm version", dev);
+		goto fail;
+	}
+	log_debug("%s reporting idm spec version '%d.%d'", dev, major, minor);
+
+	if (major < (uint8_t)MIN_IDM_SPEC_VERSION_MAJOR){
+		log_error("INVALID major IDM spec version: \
+		             %s reports '%d', lvm2 requires '%d'",
+		             dev, major, MIN_IDM_SPEC_VERSION_MAJOR);
+		goto fail;
+	}
+	// Note: casting to signed to silence compiler warning when constant = 0
+	//	Constant may get changed to non-zero in future
+	if ((int8_t)minor < (int8_t)MIN_IDM_SPEC_VERSION_MINOR){
+		log_error("INVALID minor IDM spec version: \
+		             %s reports '%d.%d', lvm2 requires '%d.%d'",
+		             dev, major, minor, MIN_IDM_SPEC_VERSION_MAJOR,
+			     MIN_IDM_SPEC_VERSION_MINOR);
+		goto fail;
+	}
+
+	return 0;
+fail:
+	return -1;
+}
+
 static char *lm_idm_nvme_get_block_device_node(const char *nvme_path)
 {
 	char *dev_node = NULL;
@@ -254,7 +296,7 @@ static char *lm_idm_nvme_get_block_device_node(const char *nvme_path)
 		goto fail;
 	}
 
-	ret = lm_idm_scsi_search_propeller_partition(dev_node);
+	ret = lm_idm_validate_spec_version(dev_node);
 	if (ret < 0)
 		goto fail;
 
@@ -308,7 +350,7 @@ static char *lm_idm_scsi_get_block_device_node(const char *scsi_path)
 		goto fail;
 	}
 
-	ret = lm_idm_scsi_search_propeller_partition(dev_node);
+	ret = lm_idm_validate_spec_version(dev_node);
 	if (ret < 0)
 		goto fail;
 
