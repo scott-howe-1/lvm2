@@ -200,52 +200,6 @@ static int lm_idm_scsi_find_block_node(const char *blk_path, char **blk_dev)
         return dir_num;
 }
 
-static int lm_idm_scsi_search_propeller_partition(char *dev)
-{
-	int i, nparts;
-	blkid_probe pr;
-	blkid_partlist ls;
-	int found = -1;
-
-	pr = blkid_new_probe_from_filename(dev);
-	if (!pr) {
-		log_error("%s: failed to create a new libblkid probe", dev);
-		return -1;
-	}
-
-	/* Binary interface */
-	ls = blkid_probe_get_partitions(pr);
-	if (!ls) {
-		log_error("%s: failed to read partitions", dev);
-		return -1;
-	}
-
-	/* List partitions */
-	nparts = blkid_partlist_numof_partitions(ls);
-	if (!nparts)
-		goto done;
-
-	for (i = 0; i < nparts; i++) {
-		const char *p;
-		blkid_partition par = blkid_partlist_get_partition(ls, i);
-
-		p = blkid_partition_get_name(par);
-		if (p) {
-			log_debug("partition name='%s'", p);
-
-			if (!strcmp(p, "propeller"))
-				found = blkid_partition_get_partno(par);
-		}
-
-		if (found >= 0)
-			break;
-	}
-
-done:
-	blkid_free_probe(pr);
-	return found;
-}
-
 // Retrieves the ILM spec version from drive firmware.
 // Compares against minimum required.
 static int lm_idm_validate_spec_version(char *dev) {
