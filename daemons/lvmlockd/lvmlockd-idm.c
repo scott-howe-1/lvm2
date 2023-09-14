@@ -258,7 +258,7 @@ static int lm_idm_validate_spec_version(char *dev) {
 		log_error("%s: Failed to read ilm version", dev);
 		goto fail;
 	}
-	log_debug("%s reporting idm spec version '%d.%d'", dev, major, minor);
+	log_info("%s reporting idm spec version '%d.%d'", dev, major, minor);
 
 	if (major < (uint8_t)MIN_IDM_SPEC_VERSION_MAJOR){
 		log_error("INVALID major IDM spec version: \
