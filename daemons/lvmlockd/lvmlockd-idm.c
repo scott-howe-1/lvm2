@@ -38,6 +38,13 @@
 #define NVME_NAMESPACE_TAG	"n"
 #define NVME_PARTITION_TAG	"p"
 
+/* This version value correpsonds to a version of the "IDM SPEC".
+This value is stored in the drive firmware.
+It is used to identify the minimum level of IDM funcionality that both the
+firmware and this software should support. */
+#define	MIN_IDM_SPEC_VERSION_MAJOR	1
+#define	MIN_IDM_SPEC_VERSION_MINOR	0
+
 /*
  * Each lockspace thread has its own In-Drive Mutex (IDM) lock manager's
  * connection.  After established socket connection, the lockspace has
@@ -193,50 +200,39 @@ static int lm_idm_scsi_find_block_node(const char *blk_path, char **blk_dev)
         return dir_num;
 }
 
-static int lm_idm_scsi_search_propeller_partition(char *dev)
-{
-	int i, nparts;
-	blkid_probe pr;
-	blkid_partlist ls;
-	int found = -1;
+// Retrieves the ILM spec version from drive firmware.
+// Compares against minimum required.
+static int lm_idm_validate_spec_version(char *dev) {
 
-	pr = blkid_new_probe_from_filename(dev);
-	if (!pr) {
-		log_error("%s: failed to create a new libblkid probe", dev);
-		return -1;
+	uint8_t major, minor;
+	int ret;
+
+	ret = ilm_version(dev, &major, &minor);
+	if(!ret) {
+		log_error("%s: Failed to read ilm version", dev);
+		goto fail;
+	}
+	log_info("%s reporting idm spec version '%d.%d'", dev, major, minor);
+
+	if (major < (uint8_t)MIN_IDM_SPEC_VERSION_MAJOR){
+		log_error("INVALID major IDM spec version: \
+		             %s reports '%d', lvm2 requires '%d'",
+		             dev, major, MIN_IDM_SPEC_VERSION_MAJOR);
+		goto fail;
+	}
+	// Note: casting to signed to silence compiler warning when constant = 0
+	//	Constant may get changed to non-zero in future
+	if ((int8_t)minor < (int8_t)MIN_IDM_SPEC_VERSION_MINOR){
+		log_error("INVALID minor IDM spec version: \
+		             %s reports '%d.%d', lvm2 requires '%d.%d'",
+		             dev, major, minor, MIN_IDM_SPEC_VERSION_MAJOR,
+			     MIN_IDM_SPEC_VERSION_MINOR);
+		goto fail;
 	}
 
-	/* Binary interface */
-	ls = blkid_probe_get_partitions(pr);
-	if (!ls) {
-		log_error("%s: failed to read partitions", dev);
-		return -1;
-	}
-
-	/* List partitions */
-	nparts = blkid_partlist_numof_partitions(ls);
-	if (!nparts)
-		goto done;
-
-	for (i = 0; i < nparts; i++) {
-		const char *p;
-		blkid_partition par = blkid_partlist_get_partition(ls, i);
-
-		p = blkid_partition_get_name(par);
-		if (p) {
-			log_debug("partition name='%s'", p);
-
-			if (!strcmp(p, "propeller"))
-				found = blkid_partition_get_partno(par);
-		}
-
-		if (found >= 0)
-			break;
-	}
-
-done:
-	blkid_free_probe(pr);
-	return found;
+	return 0;
+fail:
+	return -1;
 }
 
 static char *lm_idm_nvme_get_block_device_node(const char *nvme_path)
@@ -254,7 +250,7 @@ static char *lm_idm_nvme_get_block_device_node(const char *nvme_path)
 		goto fail;
 	}
 
-	ret = lm_idm_scsi_search_propeller_partition(dev_node);
+	ret = lm_idm_validate_spec_version(dev_node);
 	if (ret < 0)
 		goto fail;
 
@@ -308,7 +304,7 @@ static char *lm_idm_scsi_get_block_device_node(const char *scsi_path)
 		goto fail;
 	}
 
-	ret = lm_idm_scsi_search_propeller_partition(dev_node);
+	ret = lm_idm_validate_spec_version(dev_node);
 	if (ret < 0)
 		goto fail;
 
